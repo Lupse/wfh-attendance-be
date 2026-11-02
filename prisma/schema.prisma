@@ -1,0 +1,51 @@
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      Role     @default(EMPLOYEE)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  employee Employee?
+}
+
+model Employee {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @unique
+  employeeCode String   @unique
+  fullName     String
+  department   String?
+  position     String?
+  phone        String?
+
+  user        User         @relation(fields: [userId], references: [id])
+  attendances Attendance[]
+}
+
+model Attendance {
+  id             Int      @id @default(autoincrement())
+  employeeId     Int
+  attendanceDate DateTime @db.Date
+  attendanceTime DateTime @db.DateTime(3)
+  photoPath      String
+  createdAt      DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, attendanceDate])
+}
