@@ -1,114 +1,381 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# WFH Employee Attendance API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend REST API untuk aplikasi **Absensi WFH Karyawan**. Aplikasi ini menyediakan autentikasi berbasis JWT, pengelolaan data karyawan oleh Admin/HRD, pencatatan satu kali absensi per hari dengan foto bukti WFH, riwayat absensi karyawan, serta monitoring absensi oleh Admin.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+> **Project status:** Backend implementation for technical take-home assignment. The documentation below reflects the source code supplied for review.
 
-## Description
+## Table of Contents
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [System Roles](#system-roles)
+- [Business Rules](#business-rules)
+- [Database Design](#database-design)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Environment Configuration](#environment-configuration)
+- [Database Migration and Admin Seeding](#database-migration-and-admin-seeding)
+- [Run the Application](#run-the-application)
+- [API Overview](#api-overview)
+- [Attendance Photo Storage](#attendance-photo-storage)
+- [Validation and Error Handling](#validation-and-error-handling)
+- [Project Structure](#project-structure)
+- [Testing with Postman](#testing-with-postman)
+- [Security Notes](#security-notes)
 
-## Project setup
+## Features
+
+### Admin / HRD
+- Login and retrieve authenticated profile.
+- Create employee accounts and employee master data.
+- View the employee list and employee details.
+- Update employee profile information.
+- Activate or deactivate employee accounts.
+- View attendance records across employees.
+- Filter attendance by date and employee ID.
+- Search attendance using employee name or employee code.
+- Paginate attendance results.
+- View attendance evidence photos.
+- Attendance records are read-only through the implemented API.
+
+### Employee
+- Login and retrieve authenticated profile.
+- Submit one WFH attendance record per Jakarta calendar day.
+- Upload a required JPG/JPEG/PNG photo (maximum 5 MB).
+- View personal attendance history.
+- View only their own attendance evidence photos.
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js (project was developed/tested with Node.js 24.14.0) |
+| Language | TypeScript |
+| Backend framework | NestJS 12 |
+| ORM | Prisma 7 |
+| Database | MySQL |
+| Prisma database adapter | `@prisma/adapter-mariadb` |
+| Authentication | Passport JWT, `@nestjs/jwt` |
+| Password hashing | bcrypt |
+| Validation | class-validator, class-transformer |
+| File upload | Multer via `@nestjs/platform-express` |
+
+## System Roles
+
+| Role | Permissions |
+|---|---|
+| `ADMIN` | Manage employees, view all attendance, filter/search attendance, view attendance photos |
+| `EMPLOYEE` | Submit own attendance, view own attendance history, view own attendance photos |
+
+The API uses JWT authentication. Protected routes expect an access token in the `Authorization` header. Role restrictions are applied through `RolesGuard` and the `@Roles()` decorator.
+
+## Business Rules
+
+1. An employee can submit attendance **once per calendar day**.
+2. The attendance date is calculated by the backend using the `Asia/Jakarta` timezone. The client cannot submit or override the attendance timestamp.
+3. The attendance time is generated by the backend at submission time.
+4. An attendance submission requires a photo.
+5. Accepted file extensions are `.jpg`, `.jpeg`, and `.png`; accepted declared MIME types are `image/jpeg` and `image/png`.
+6. Maximum uploaded file size is 5 MB (5 × 1024 × 1024 bytes).
+7. Employee identity is derived from the authenticated JWT, not from a client-supplied employee ID.
+8. A database unique constraint on `(employeeId, attendanceDate)` prevents duplicate daily submissions, including concurrent requests.
+9. Employee accounts are deactivated rather than deleted so that employee and attendance history can be retained.
+10. Admin attendance endpoints are read-only; no attendance update or delete endpoint is implemented.
+
+## Database Design
+
+The Prisma schema defines three tables:
+
+### `User`
+Stores login credentials and account authorization information.
+
+| Field | Description |
+|---|---|
+| `id` | Primary key |
+| `email` | Unique login email |
+| `password` | bcrypt password hash |
+| `role` | `ADMIN` or `EMPLOYEE` |
+| `isActive` | Account activation status |
+| `createdAt` | Account creation timestamp |
+
+### `Employee`
+Stores employee master data and is linked one-to-one with `User`.
+
+| Field | Description |
+|---|---|
+| `id` | Primary key |
+| `userId` | Unique foreign key to `User.id` |
+| `employeeCode` | Unique employee identifier |
+| `fullName` | Employee name |
+| `department` | Optional department |
+| `position` | Optional position |
+| `phone` | Optional phone number |
+
+### `Attendance`
+Stores daily attendance submissions and links each record to an employee.
+
+| Field | Description |
+|---|---|
+| `id` | Primary key |
+| `employeeId` | Foreign key to `Employee.id` |
+| `attendanceDate` | Jakarta calendar date (`DATE`) |
+| `attendanceTime` | Server-generated timestamp (`DATETIME(3)`) |
+| `photoPath` | Relative path of uploaded evidence photo |
+| `createdAt` | Record creation timestamp |
+
+**Relationships**
+- One `User` can have zero or one `Employee` record.
+- One `Employee` belongs to one `User`.
+- One `Employee` can have many `Attendance` records.
+- `(employeeId, attendanceDate)` has a unique constraint.
+
+## Prerequisites
+
+- Node.js and npm. Node.js 24.14.0 was used for the supplied development environment.
+- MySQL server accessible from the application.
+- Git (optional, for cloning the repository).
+- Postman (recommended for API testing).
+
+## Installation
 
 ```bash
-$ npm install
+git clone <YOUR_REPOSITORY_URL>
+cd absensi-backend
+npm install
 ```
 
-## Compile and run the project
+If the project is already available locally, open the project directory and run `npm install`.
+
+## Environment Configuration
+
+Create a `.env` file in the project root:
+
+```env
+# Prisma CLI connection URL
+DATABASE_URL="mysql://root:your_password@localhost:3306/absensi_wfh"
+
+# Runtime connection settings used by PrismaMariaDb adapter
+DATABASE_HOST="localhost"
+DATABASE_PORT="3306"
+DATABASE_USER="root"
+DATABASE_PASSWORD="your_password"
+DATABASE_NAME="absensi_wfh"
+
+# JWT signing secret: use a long, random secret in real deployments
+JWT_SECRET="replace_with_a_long_random_secret"
+
+# Admin account used by the seed script
+ADMIN_EMAIL="admin@absensiwfh.com"
+ADMIN_PASSWORD="replace_with_a_strong_admin_password"
+
+# Optional application port (default: 3000)
+PORT="3000"
+```
+
+Create the database before running migrations, for example:
+
+```sql
+CREATE DATABASE absensi_wfh;
+```
+
+**Important:** Never commit `.env`, real credentials, database passwords, or JWT secrets to a public repository. Keep `.env.example` with placeholder values instead.
+
+## Database Migration and Admin Seeding
+
+Generate the Prisma client:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npx prisma generate
 ```
 
-## Run tests
+Apply existing migrations:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npx prisma migrate deploy
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+For local development where you need to create a new migration after changing the Prisma schema:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npx prisma migrate dev --name <migration_name>
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Create or ensure the initial Admin account:
 
-## Observability
+```bash
+npm run db:seed:admin
+```
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+The seed script reads `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `.env`, hashes the password with bcrypt, and upserts the Admin account. **Important implementation detail:** when the email already exists, the current `upsert` update branch sets `role` to `ADMIN` and `isActive` to `true`, but does not replace the existing password hash. To rotate an existing Admin password, update it through a dedicated secure process or adjust the seed script intentionally.
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+## Run the Application
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+Development mode:
 
-## Resources
+```bash
+npm run start:dev
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+Build:
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+npm run build
+```
 
-## Support
+Production mode (after a successful build):
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```bash
+npm run start:prod
+```
 
-## Stay in touch
+Default base URL:
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```text
+http://localhost:3000
+```
 
-## License
+## API Overview
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+All endpoints are documented in [`API_DOCUMENTATION.md`](./API_DOCUMENTATION.md).
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| POST | `/auth/login` | Public | Login |
+| GET | `/auth/profile` | Authenticated | Get current JWT profile |
+| POST | `/employees` | ADMIN | Create employee |
+| GET | `/employees` | ADMIN | List employees |
+| GET | `/employees/:id` | ADMIN | Employee detail |
+| PATCH | `/employees/:id` | ADMIN | Update employee |
+| PATCH | `/employees/:id/deactivate` | ADMIN | Deactivate employee |
+| PATCH | `/employees/:id/activate` | ADMIN | Activate employee |
+| POST | `/attendance` | EMPLOYEE | Submit daily attendance with photo |
+| GET | `/attendance/me` | EMPLOYEE | View own attendance history |
+| GET | `/attendance` | ADMIN | Monitor/filter attendance |
+| GET | `/attendance/:id/photo` | ADMIN / owning EMPLOYEE | View attendance photo |
+
+### JWT Header
+
+For protected endpoints:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+### Example Login
+
+```http
+POST /auth/login
+Content-Type: application/json
+```
+
+```json
+{
+  "email": "admin@absensiwfh.com",
+  "password": "your_admin_password"
+}
+```
+
+The response contains `accessToken`, `tokenType`, and a safe user object.
+
+## Attendance Photo Storage
+
+- Multer stores uploaded photos on the local filesystem under `uploads/attendance/`.
+- The database stores a relative path in `Attendance.photoPath`; image bytes are not stored in MySQL.
+- The photo endpoint streams the file only after authentication and authorization checks.
+- Admin can view any attendance photo.
+- Employee can view a photo only when the attendance record belongs to that employee.
+- Keep the upload directory persistent and backed up in deployments. Local filesystem storage is suitable for a single-instance development/demo deployment; production deployments with multiple instances should consider shared object storage.
+- The current upload filter checks the declared MIME type and file extension. For a production-grade deployment, add file-signature/content inspection and malware scanning as appropriate.
+
+## Validation and Error Handling
+
+A global NestJS `ValidationPipe` is enabled with:
+- `whitelist: true` — strips properties that are not declared in DTOs.
+- `forbidNonWhitelisted: true` — rejects unknown properties.
+- `transform: true` — transforms query values such as `page`, `limit`, and `employeeId` into numbers.
+
+Common status codes:
+
+| Status | Meaning |
+|---|---|
+| `200 OK` | Request succeeded |
+| `201 Created` | Resource created / attendance submitted |
+| `400 Bad Request` | Invalid input, missing photo, or invalid file type |
+| `401 Unauthorized` | Missing/invalid/expired JWT or invalid login |
+| `403 Forbidden` | Authenticated user lacks the required role or ownership |
+| `404 Not Found` | Requested employee, attendance, or photo does not exist |
+| `409 Conflict` | Duplicate email/employee code or attendance already submitted for the day |
+| `413 Payload Too Large` | Uploaded file exceeds the configured Multer limit (framework handling) |
+| `500 Internal Server Error` | Unexpected server error |
+
+## Project Structure
+
+```text
+absensi-backend/
+├── prisma/
+│   ├── migrations/
+│   ├── schema.prisma
+│   └── seed-admin.ts
+├── src/
+│   ├── auth/
+│   │   ├── dto/
+│   │   ├── guards/
+│   │   ├── strategies/
+│   │   ├── auth.controller.ts
+│   │   ├── auth.module.ts
+│   │   └── auth.service.ts
+│   ├── attendances/
+│   │   ├── dto/
+│   │   ├── attendance.controller.ts
+│   │   ├── attendance.module.ts
+│   │   └── attendance.service.ts
+│   ├── employees/
+│   │   ├── dto/
+│   │   ├── employees.controller.ts
+│   │   ├── employees.module.ts
+│   │   └── employees.service.ts
+│   ├── prisma/
+│   │   ├── prisma.module.ts
+│   │   └── prisma.service.ts
+│   ├── app.module.ts
+│   └── main.ts
+├── uploads/
+│   └── attendance/        # created when a photo is uploaded
+├── prisma7.config.ts
+├── package.json
+└── tsconfig.json
+```
+
+## Testing with Postman
+
+Suggested testing sequence:
+
+1. Login as Admin using `POST /auth/login`.
+2. Copy the returned `accessToken` and use it as a Bearer token.
+3. Create an employee using `POST /employees`.
+4. Login as the Employee and save the Employee token.
+5. Submit attendance using `POST /attendance` with `multipart/form-data`:
+   - Key: `photo`
+   - Type: File
+   - Value: a JPG/JPEG/PNG file no larger than 5 MB.
+6. Submit again on the same Jakarta date and confirm the API rejects the duplicate.
+7. Call `GET /attendance/me` using the Employee token.
+8. Call `GET /attendance` using the Admin token and test date, employee ID, search, and pagination filters.
+9. Call `GET /attendance/:id/photo`:
+   - Admin token should be able to view any existing photo.
+   - Owning Employee token should be able to view their own photo.
+   - A different Employee token should receive `403 Forbidden`.
+10. Verify Employee tokens cannot access Admin-only employee management and attendance monitoring endpoints.
+
+See [`API_DOCUMENTATION.md`](./API_DOCUMENTATION.md) for detailed request and response examples.
+
+## Security Notes
+
+- Passwords are hashed using bcrypt with 10 salt rounds before storage.
+- Password hashes are not included in employee API responses.
+- Attendance ownership is derived from the authenticated account.
+- Attendance uniqueness is enforced at the database level.
+- Attendance photo retrieval is protected by JWT and ownership checks.
+- The JWT lifetime is configured as **1 day** in `AuthModule`.
+- The current JWT strategy validates token signature and expiration. It does not re-query the user account on every request; consider adding active-account revalidation if immediate token revocation after deactivation is required.
+- Use HTTPS, strong secrets, database least-privilege credentials, persistent file storage, and request logging/monitoring in production.
